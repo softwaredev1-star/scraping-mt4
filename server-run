@@ -1,0 +1,5 @@
+#!/bin/sh
+
+DIR=$(dirname $(realpath $0))
+
+"xvfb-run --server-args='-screen 0, 1024x768x16' $DIR/node_modules/.bin/electron main.js --no-sandbox"

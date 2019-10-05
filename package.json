@@ -1,0 +1,19 @@
+{
+  "name": "forex-trading-scrapper",
+  "version": "0.0.1",
+  "description": "STARTUP",
+  "main": "main.js",
+  "author": "Hossein Amin<hossein@aminbros.com>",
+  "license": "GPL-2.0",
+  "private": true,
+  "dependencies": {
+    "delay": "^4.3.0",
+    "electron": "^6.0.11",
+    "lodash": "^4.17.15"
+  },
+  "scripts": {
+    "start": "electron main.js",
+    "start-on-server": "xvfb-run --server-args='-screen 0, 1024x768x16' electron main.js --no-sandbox"
+  }
+}
+
