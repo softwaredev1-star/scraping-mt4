@@ -7,7 +7,7 @@ const EventEmitter = require('events')
 
 let default_refresh_every = 100
 let default_block_timeout = 60 * 1000
-let delay_before_start = 5000
+let delay_before_start = 2000
 let tracker_first_time_run_least_delay = 5000
 
 let $qs = document.querySelector.bind(document)
@@ -35,7 +35,12 @@ async function init (params) {
     await doLogin(login, password, rememberLogin)
     log('did-login')
   }
-  await delay(delay_before_start) // a big delay
+  await delay(delay_before_start)
+  // wait for charts to load
+  while (Array.from($qsa('.a-N-Ph-v-ab')).filter((a) => a.style.display!='none').length > 0) {
+    log('waiting')
+    await delay(2000)
+  }
   // remove wiki dialog
   let wikidds = $qs('.dds-wiki-whats-new')
   if (wikidds) {
@@ -47,6 +52,7 @@ async function init (params) {
   // clear all existing instruments, etc
   log('cleanup')
   cleanup()
+  await delay(2000)
   // track all incoming chart data
   let trackers = startTracking(instrumentsPath.map((a) => a[a.length-1]))
   for (let tracker of trackers) {
@@ -58,22 +64,81 @@ async function init (params) {
   for (let instrumentPath of instrumentsPath) {
     await addInstrument(instrumentPath)
   }
+  // status check
+  let calledDidConnectOnce = false
+  let connected = !!$qs('.d-status-connection.d-connected-active,.d-status-connection.d-connected')
+  let mouseX = Math.random() * 500
+  let mouseY = Math.random() * 500
+  document.body.dispatchEvent(new MouseEvent('mouseover', {
+    screenX: Math.floor(mouseX),
+    screenY: Math.floor(mouseY),
+    clientX: Math.floor(mouseX),
+    clientY: Math.floor(mouseY),
+    bubbles: true
+  }))
+  setInterval(() => {
+    try {
+      let new_connected = !!$qs('.d-status-connection.d-connected-active,.d-status-connection.d-connected')
+      if (connected != new_connected) {
+        connected = new_connected
+        log('Connect status did change: ' + (connected ? 'true' : 'false'))
+      }
+      checkAndHandleMessageBox()
+      setTimeout(() => {
+        try {
+          mouseX += Math.min(800, Math.max(0, (Math.random() - 0.5) * 5))
+          mouseY += Math.min(600, Math.max(0, (Math.random() - 0.5) * 5))
+          document.body.dispatchEvent(new MouseEvent('mousemove', {
+            screenX: Math.floor(mouseX),
+            screenY: Math.floor(mouseY),
+            clientX: Math.floor(mouseX),
+            clientY: Math.floor(mouseY),
+            bubbles: true
+          }))
+        } catch (err) {
+          logError(err)
+        }
+      }, Math.floor(Math.random() * 300))
+    } catch (err) {
+      logError(err)
+    }
+  }, 2000)
   function onBlockFound (data, tracker, ticks) {
-    let targetfn = instrumentsTargetFiles[tracker.instrument]
-    if (targetfn) {
-      let idata = data.biddata
-      let time = new Date(new Date(data.timestamp).toLocaleString("en-US", {timeZone: timezone}))
-      let dtstr = time.getFullYear() + '-' + zerofill2(time.getMonth()) + '-' + zerofill2(time.getDay()) + ' ' + zerofill2(time.getHours()) + ':' + zerofill2(time.getMinutes()) + ':' + zerofill2(time.getSeconds());
-      let row = [ dtstr, idata.open, idata.high, idata.low,
-                  idata.close, idata.volume / 1000000 ]
-      fs.appendFileSync(targetfn, row.join(',') + '\r\n');
+    try {
+      let targetfn = instrumentsTargetFiles[tracker.instrument]
+      if (targetfn) {
+        let idata = data.biddata
+        let time = new Date(new Date(data.timestamp).toLocaleString("en-US", {timeZone: timezone}))
+        let dtstr = zerofill2(time.getDay()) + '.' + zerofill2(time.getMonth()) + '.' + time.getFullYear() + ' ' + zerofill2(time.getHours()) + ':' + zerofill2(time.getMinutes()) + ':' + zerofill2(time.getSeconds()) + '.' + zerofill(time.getTime()%1000, 3)
+        let row = [ dtstr, idata.open, idata.high, idata.low,
+                    idata.close, idata.volume / 1000000 ]
+        if (!fs.existsSync(targetfn)) {
+          fs.writeFileSync(targetfn, 'Time,Open,High,Low,Close,Volume\r\n')
+        }
+        log('newdata', tracker.instrument, row)
+        fs.appendFileSync(targetfn, row.join(',') + '\r\n');
+      }
+    } catch (err) {
+      logError(err)
     }
   }
 }
 
+function checkAndHandleMessageBox () {
+  let messagebox = $qs('.x-message-box')
+  if (!!messagebox && !messagebox.__didlog) {
+    messagebox.__didlog = true
+    let msg = messagebox.textContent.trim()
+    fatalError('Unexpected message box: ' + msg)
+  }
+}
+
 function zerofill2 (s) {
+  return zerofill(s, 2)
+}
+function zerofill (s, n) {
   s = s+''
-  return '0'.repeat(Math.max(2 - s.length, 0)) + s
+  return '0'.repeat(Math.max(n - s.length, 0)) + s
 }
 
 class InstrumentTracker extends EventEmitter {
@@ -259,9 +324,9 @@ async function addInstrument (instrumentPath) {
 }
 
 async function removeDisclaimerIfAnyExists () {
-  let disclaimerwin = $qs('.dds-platform-disclaimer')
+  let disclaimerwin = $qs('.dds-platform-disclaimer,.dds-login-disclaimer')
   if (disclaimerwin) {
-    let btns = disclaimerwin.querySelectorAll('.x-btn').filter((a) => a.textContent.trim().toLowerCase() == 'i agree')
+    let btns = Array.from(disclaimerwin.querySelectorAll('.x-btn')).filter((a) => a.textContent.trim().toLowerCase() == 'i agree')
     if (btns.length > 0) {
       btns[0].click()
       await delay(500)
@@ -313,6 +378,8 @@ async function doLogin (login, password, remember) {
   passwordinp.dispatchEvent(new CustomEvent('input', { bubbles: true }))
   if (remember && remembercheckbox) {
     remembercheckbox.click()
+    await delay(1000)
+    removeDisclaimerIfAnyExists()
   }
   submitbtn.click()
   // wait for a response

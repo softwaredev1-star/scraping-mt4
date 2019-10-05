@@ -34,10 +34,10 @@ function createWindow () {
    */
   let mainWindow = new BrowserWindow({
     useContentSize: true,
-    width: 800,
-    height: 600,
+    width: 1024,
+    height: 768,
     webPreferences: {
-      devTools: isDevelopment,
+      devTools: !runHeadless && isDevelopment,
       webviewTag: false,
       nodeIntegration: false,
       enableBlinkFeatures: null,
@@ -46,7 +46,7 @@ function createWindow () {
     },
     show: !runHeadless,
   })
-  if (isDevelopment) {
+  if (!runHeadless && isDevelopment) {
     mainWindow.webContents.openDevTools()
   }
   mainWindow.loadURL(winURL)
