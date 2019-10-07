@@ -9,6 +9,8 @@ let default_refresh_every = 100
 let default_block_timeout = 60 * 1000
 let delay_before_start = 2000
 let tracker_first_time_run_least_delay = 5000
+let no_record_timeout_ms = 6 * 60 * 1000 // 6 minutes
+let watchdog_interval_ms = 2 * 60 * 1000
 
 let $qs = document.querySelector.bind(document)
 let $qsa = document.querySelectorAll.bind(document)
@@ -46,12 +48,12 @@ async function init (params) {
   if (wikidds) {
     let closebtn = wikidds.querySelector('.d-wiki-buttons .x-btn')
     if (closebtn) {
-      closebtn.click()
+      await clickEvent(closebtn)
     }
   }
   // clear all existing instruments, etc
   log('cleanup')
-  cleanup()
+  await cleanup()
   await delay(2000)
   // track all incoming chart data
   let trackers = startTracking(instrumentsPath.map((a) => a[a.length-1]))
@@ -69,6 +71,7 @@ async function init (params) {
   let connected = !!$qs('.d-status-connection.d-connected-active,.d-status-connection.d-connected')
   let mouseX = Math.random() * 500
   let mouseY = Math.random() * 500
+  let recordTimeout = setTimeout(handleNoRecordTimeout, no_record_timeout_ms)
   document.body.dispatchEvent(new MouseEvent('mouseover', {
     screenX: Math.floor(mouseX),
     screenY: Math.floor(mouseY),
@@ -76,6 +79,7 @@ async function init (params) {
     clientY: Math.floor(mouseY),
     bubbles: true
   }))
+  setInterval(chartsWatchdogExec, watchdog_interval_ms)
   setInterval(() => {
     try {
       let new_connected = !!$qs('.d-status-connection.d-connected-active,.d-status-connection.d-connected')
@@ -109,19 +113,27 @@ async function init (params) {
       if (targetfn) {
         let idata = data.biddata
         let time = new Date(new Date(data.timestamp).toLocaleString("en-US", {timeZone: timezone}))
-        let dtstr = zerofill2(time.getDay()) + '.' + zerofill2(time.getMonth()) + '.' + time.getFullYear() + ' ' + zerofill2(time.getHours()) + ':' + zerofill2(time.getMinutes()) + ':' + zerofill2(time.getSeconds()) + '.' + zerofill(time.getTime()%1000, 3)
+        let dtstr = zerofill2(time.getDate()) + '/' + zerofill2(time.getMonth()) + '/' + time.getFullYear() + ' ' + zerofill2(time.getHours()) + ':' + zerofill2(time.getMinutes())// + ':' + zerofill2(time.getSeconds()) + '.' + zerofill(time.getTime()%1000, 3)
         let row = [ dtstr, idata.open, idata.high, idata.low,
-                    idata.close, idata.volume / 1000000 ]
+                    idata.lose, idata.volume / 1000000 ]
         if (!fs.existsSync(targetfn)) {
           fs.writeFileSync(targetfn, 'Time,Open,High,Low,Close,Volume\r\n')
         }
         log('newdata', tracker.instrument, row)
         fs.appendFileSync(targetfn, row.join(',') + '\r\n');
       }
+      if (recordTimeout != null) {
+        clearTimeout(recordTimeout)
+        recordTimeout = setTimeout(handleNoRecordTimeout, no_record_timeout_ms)
+      }
     } catch (err) {
       logError(err)
     }
   }
+}
+
+function handleNoRecordTimeout () {
+  fatalError('No record found for a long time!')
 }
 
 function checkAndHandleMessageBox () {
@@ -131,6 +143,66 @@ function checkAndHandleMessageBox () {
     let msg = messagebox.textContent.trim()
     fatalError('Unexpected message box: ' + msg)
   }
+}
+
+async function clickEvent (elm) {
+  elm.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  await delay(50)
+  elm.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+  elm.click()
+  await delay(500)
+}
+
+async function chartsWatchdogExec () {
+  let chartsui = document.querySelectorAll('.dds-market-chart-ui')
+  let tabs = document.querySelectorAll('.dds-chart-tabpanel .x-tab-bar .x-tab')
+  for (let tab of tabs) {
+    await clickEvent(tab)
+    let activecharts = Array.from(document.querySelectorAll('.dds-market-chart-ui')).filter((a)=>a.style.display!='none')
+    if (activecharts.length == 0) {
+      continue
+    }
+    let chart = activecharts[0]
+    let period_select_btn = chart.querySelector('.x-panel-body [title="Select time period"][role="button"]')
+    if (!period_select_btn) {
+      log('Warn, Could not find period btn')
+    } else {
+      await clickEvent(period_select_btn)
+      let periodbtnlist = Array.from(document.querySelectorAll('.a-kl-ll-Kg'))
+          .filter((a) => {
+            if (a.getAttribute('id') != '2;1M') {
+              return false
+            }
+            let menu = elmFindParent(a, (b) => b.getAttribute('role') == 'menu')
+            return menu && menu.style.display != 'none'
+          })
+      if (periodbtnlist.length == 0) {
+        log('Warn, Could not find period btn 1 minute')
+      } else {
+        await clickEvent(periodbtnlist[0])
+      }
+    }
+    let autoshiftbtn = chart.querySelector('.x-panel-body [title="Auto shift"][role="button"]')
+    if (!autoshiftbtn) {
+      log('Warn, Could not find auto autoshiftbtn!')
+    } else {
+      await clickEvent(autoshiftbtn)
+    }
+    await delay(500)
+  }
+}
+
+function elmFindParent (elm, condf) {
+  while (!!elm) {
+    elm = elm.parentNode
+    if (elm.nodeType != Node.ELEMENT_NODE) {
+      break
+    }
+    if (condf(elm)) {
+      return elm
+    }
+  }
+  return null
 }
 
 function zerofill2 (s) {
@@ -336,11 +408,24 @@ async function removeDisclaimerIfAnyExists () {
   }
 }
 
-function cleanup () {
+async function cleanup () {
   // close all instruments tab
-  $qsa('.x-tab-close-btn').forEach((a)=>a.click())
+  let maxtry = 5
+  while (maxtry > 0) {
+    let btns = $qsa('.x-tab-close-btn')
+    if (btns.length == 0) {
+      break
+    }
+    for (let btn of btns) {
+      await clickEvent(btn)
+    }
+    maxtry -= 1
+  }
   // to collapse all left panels
-  $qsa('.x-tool-collapse-top').forEach((a)=>a.click())
+  let btns = $qsa('.x-tool-collapse-top')
+  for (let btn of btns) {
+    await clickEvent(btn)
+  }
 }
 
 function untilLoadingFinish () {
