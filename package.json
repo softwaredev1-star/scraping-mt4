@@ -9,7 +9,7 @@
   "dependencies": {
     "delay": "^4.3.0",
     "electron": "^6.0.11",
-    "lodash": "^4.17.15"
+    "lodash": "^4.17.21"
   },
   "scripts": {
     "start": "electron main.js",
