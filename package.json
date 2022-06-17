@@ -8,7 +8,7 @@
   "private": true,
   "dependencies": {
     "delay": "^4.3.0",
-    "electron": "^6.0.11",
+    "electron": "^15.5.5",
     "lodash": "^4.17.15"
   },
   "scripts": {
